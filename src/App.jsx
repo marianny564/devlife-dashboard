@@ -4,6 +4,8 @@
 
 import { useState, useEffect } from "react";
 import Header from "./components/Header";
+import StatusRede from "./components/StatusRede";
+import InstallPrompt from "./components/InstallPrompt";
 import TaskCard from "./components/TaskCard";
 import TaskForm from "./components/TaskForm";
 
@@ -75,6 +77,8 @@ function App() {
       </a>
 
       <Header />
+      <StatusRede />
+      <InstallPrompt />
 
       <div aria-live="polite" role="status" className="sr-only">
         {anuncio}
