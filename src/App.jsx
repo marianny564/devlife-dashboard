@@ -6,13 +6,34 @@ import { useState, useEffect } from "react";
 import Header from "./components/Header";
 import StatusRede from "./components/StatusRede";
 import InstallPrompt from "./components/InstallPrompt";
+import NotificationPrompt from "./components/NotificationPrompt";
+import { notificarLocal } from "./notifications";
+import { agendarSincronizacao } from "./backgroundSync";
 import TaskCard from "./components/TaskCard";
 import TaskForm from "./components/TaskForm";
 
 const TAREFAS_INICIAIS = [
-  { id: 1, titulo: "Estudar componentes do React", categoria: "Estudos", prioridade: "alta", concluida: false },
-  { id: 2, titulo: "Configurar o Tailwind no projeto", categoria: "Projeto", prioridade: "media", concluida: true },
-  { id: 3, titulo: "Beber água 💧", categoria: "Saúde", prioridade: "baixa", concluida: false },
+  {
+    id: 1,
+    titulo: "Estudar componentes do React",
+    categoria: "Estudos",
+    prioridade: "alta",
+    concluida: false,
+  },
+  {
+    id: 2,
+    titulo: "Configurar o Tailwind no projeto",
+    categoria: "Projeto",
+    prioridade: "media",
+    concluida: true,
+  },
+  {
+    id: 3,
+    titulo: "Beber água 💧",
+    categoria: "Saúde",
+    prioridade: "baixa",
+    concluida: false,
+  },
 ];
 
 function App() {
@@ -22,6 +43,16 @@ function App() {
   const [tarefas, setTarefas] = useState(() => {
     const salvas = localStorage.getItem("devlife-tarefas");
     return salvas ? JSON.parse(salvas) : TAREFAS_INICIAIS;
+
+    function avisarMudancaOffline() {
+      if (!navigator.onLine) {
+        agendarSincronizacao("sincronizar-tarefas");
+        setAnuncio(
+          (atual) =>
+            `${atual} A sincronização ocorrerá quando a conexão voltar.`,
+        );
+      }
+    }
   });
 
   const [anuncio, setAnuncio] = useState("");
@@ -29,10 +60,88 @@ function App() {
 
   // EFEITO COLATERAL: sincronizar o estado com o localStorage.
   // Roda toda vez que `tarefas` muda (é a dependência do array).
-  useEffect(() => {
-    console.log("💾 Salvando tarefas no localStorage...");
-    localStorage.setItem("devlife-tarefas", JSON.stringify(tarefas));
-  }, [tarefas]);
+  const APP_SHELL = [
+    "/",
+    "/manifest.webmanifest",
+    "/icons/icon-192.png",
+    "/icons/icon-512.png",
+  ];
+
+  self.addEventListener("install", (event) => {
+    self.skipWaiting();
+    event.waitUntil(
+      caches.open(CACHE_NAME).then((cache) => cache.addAll(APP_SHELL)),
+    );
+  });
+
+  self.addEventListener("activate", (event) => {
+    event.waitUntil(
+      caches
+        .keys()
+        .then((nomes) =>
+          Promise.all(
+            nomes
+              .filter((nome) => nome != CACHE_NAME)
+              .map((nome) => caches.delete(nome)),
+          ),
+        )
+        .then(() => self.clients.claim()),
+    );
+  });
+
+  self.addEventListener("fetch", (event) => {
+    const { request } = event;
+    if (request.method !== "GET") return;
+
+    event.respondWith(
+      caches.match(request).then((respostaEmCache) => {
+        const buscaNaRede = fetch(request)
+          .then((respostaDaRede) => {
+            if (respostaDaRede && respostaDaRede.status === 200) {
+              const copia = respostaDaRede.clone();
+              caches
+                .open(CACHE_NAME)
+                .then((cache) => cache.put(request, copia));
+            }
+            return respostaDaRede;
+          })
+          .catch(() => respostaEmCache);
+        return respostaEmCache || buscaNaRede;
+      }),
+    );
+  });
+
+  // SYNC: disparado pelo NAVEGADOR (não pelo nosso JS) assim que a conexão
+  // volta, para qualquer tag registrada via registro.sync.register(tag).
+  self.addEventListener("sync", (event) => {
+    if (event.tag !== "sincronizar-tarefas") return;
+
+    event.waitUntil(
+      self.clients.matchAll().then((clientes) => {
+        clientes.forEach((cliente) =>
+          cliente.postMessage({
+            tipo: "SINCRONIZADO",
+            em: new Date().toISOString(),
+          }),
+        );
+      }),
+    );
+  });
+  // PUSH: disparado quando um SERVIDOR envia uma mensagem push de verdade.
+  // Não conseguimos disparar este evento sem um backend real, mas ele fica
+  // pronto e documentado para quando você conectar um.
+  self.addEventListener("push", (event) => {
+    const dados = event.data
+      ? event.data.json()
+      : { titulo: "DevLife Dashboard", corpo: "Você tem uma novidade." };
+    event.waitUntil(
+      self.registration.showNotification(dados.titulo, {
+        body: dados.corpo,
+        icon: "/icons/icon-192.png",
+        badge: "/icons/icon-192.png",
+      }),
+    );
+  });
 
   function adicionarTarefa(novaTarefa) {
     // Nunca alteramos o array diretamente (tarefas.push(...) ❌)
@@ -41,22 +150,45 @@ function App() {
       ...atual,
       { ...novaTarefa, id: Date.now(), concluida: false },
     ]);
-    setAnuncio(` Tarefa "${novaTarefa.titulo}" adicionada`)
+    setAnuncio(` Tarefa "${novaTarefa.titulo}" adicionada`);
+    avisarMudancaOffline();
   }
 
   function alternarConcluida(id) {
     const tarefa = tarefas.find((t) => t.id === id);
+
     const vaiConcluir = !tarefa.concluida;
+
     const status = vaiConcluir ? "concluída" : "pendente";
+
     setTarefas((atual) =>
-      atual.map((t) => (t.id === id ? { ...t, concluida: !t.concluida } : t))
+      atual.map((t) =>
+        t.id === id
+          ? {
+              ...t,
+              concluida: !t.concluida,
+            }
+          : t,
+      ),
     );
+
+    setAnuncio(`Tarefa "${tarefa.titulo}" marcada como ${status}.`);
+    // Gatilho real: tarefa importante concluída.
+    if (vaiConcluir && tarefa.prioridade === "alta") {
+      notificarLocal("Boa! Tarefa de alta prioridade concluída 🎉", {
+        body: tarefa.titulo,
+      });
+    }
   }
 
   function removerTarefa(id) {
     const tarefa = tarefas.find((t) => t.id === id);
+
     setTarefas((atual) => atual.filter((t) => t.id !== id));
+
     setAnuncio(`Tarefa "${tarefa.titulo}" removida.`);
+
+    avisarMudancaOffline();
   }
 
   const tarefasFiltradas = tarefas.filter((t) => {
@@ -67,9 +199,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-slate-100">
-      <a 
-      href="#conteudo"
-      className={`sr-only focus:not-sr-only focus:fixed focus:top-2
+      <a
+        href="#conteudo"
+        className={`sr-only focus:not-sr-only focus:fixed focus:top-2
       focus:left-2 focus:z-50 focus:bg-white focus:text-slate-900
       focus:px-4 focus:py-2 focus:rounded-lg focus:shadow-lg`}
       >
@@ -79,6 +211,7 @@ function App() {
       <Header />
       <StatusRede />
       <InstallPrompt />
+      <NotificationPrompt />
 
       <div aria-live="polite" role="status" className="sr-only">
         {anuncio}

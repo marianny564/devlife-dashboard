@@ -6,18 +6,15 @@ function InstallPrompt() {
 
   useEffect(() => {
     function aoPoderInstalar(evento) {
+      // Impede o mini-infobar automático do Chrome — vamos mostrar o
+      // NOSSO botão, no NOSSO momento.
       evento.preventDefault();
       setPromptEvent(evento);
       setVisivel(true);
     }
-
     window.addEventListener("beforeinstallprompt", aoPoderInstalar);
-
     return () =>
-      window.removeEventListener(
-        "beforeinstallprompt",
-        aoPoderInstalar
-      );
+      window.removeEventListener("beforeinstallprompt", aoPoderInstalar);
   }, []);
 
   async function instalar() {
@@ -39,11 +36,7 @@ function InstallPrompt() {
       flex items-center justify-between gap-4 flex-wrap"
     >
       <div className="flex items-center gap-3">
-        <img
-          src="/icons/icon-192.png"
-          alt=""
-          className="w-8 h-8 rounded-lg"
-        />
+        <img src="/icons/icon-192.png" alt="" className="w-8 h-8 rounded-lg" />
 
         <p className="text-sm font-medium">
           Instale o DevLife Dashboard no seu dispositivo e use até offline.
